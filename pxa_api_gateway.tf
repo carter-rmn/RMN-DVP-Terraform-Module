@@ -272,17 +272,102 @@ resource "aws_api_gateway_method_response" "event_options_200" {
 }
 
 resource "aws_api_gateway_integration" "event_options_integration" {
-  rest_api_id             = aws_api_gateway_rest_api.api_gateway.id
-  resource_id             = aws_api_gateway_resource.event.id
-  http_method             = aws_api_gateway_method.event_options.http_method
-  type                    = "MOCK"
+  rest_api_id          = aws_api_gateway_rest_api.api_gateway.id
+  resource_id          = aws_api_gateway_resource.event.id
+  http_method          = aws_api_gateway_method.event_options.http_method
+  type                 = "MOCK"
+  passthrough_behavior = "WHEN_NO_MATCH"
+  content_handling     = "CONVERT_TO_TEXT"
 
   request_templates = {
-    "application/json" = "{\"statusCode\": 200}"
+    "application/json" = jsonencode({
+      statusCode = 200
+    })
+  }
+}
+
+resource "aws_api_gateway_integration_response" "authenticate_options_integration_response" {
+  depends_on  = [aws_api_gateway_integration.authenticate_options_integration]
+  rest_api_id = aws_api_gateway_rest_api.api_gateway.id
+  resource_id = aws_api_gateway_resource.authenticate_resource.id
+  http_method = aws_api_gateway_method.authenticate_options.http_method
+  status_code = "200"
+
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+    "method.response.header.Access-Control-Allow-Methods" = "'POST,OPTIONS'",
+    "method.response.header.Access-Control-Allow-Origin"  = "'*'"
+  }
+
+  response_templates = {
+    "application/json" = ""
+  }
+}
+
+# Stage and Deployment
+resource "aws_api_gateway_deployment" "deployment" {
+  depends_on = [
+    aws_api_gateway_integration.event_post,
+    aws_api_gateway_integration.authenticate_integration,
+    aws_api_gateway_integration.geolocation_integration,
+    aws_api_gateway_integration.event_options_integration,
+    aws_api_gateway_integration.authenticate_options_integration,
+    aws_api_gateway_integration_response.event_post_200,
+    aws_api_gateway_integration_response.event_post_400,
+    aws_api_gateway_integration_response.event_post_401,
+    aws_api_gateway_integration_response.event_post_403,
+    aws_api_gateway_integration_response.event_post_500,
+    aws_api_gateway_integration_response.event_options_integration_response,
+    aws_api_gateway_integration_response.authenticate_options_integration_response
+  ]
+  rest_api_id = aws_api_gateway_rest_api.api_gateway.id
+
+  # Add lifecycle block to handle deployment updates
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  # Add triggers to force new deployment when integrations change
+  triggers = {
+    redeployment = sha1(jsonencode([
+      aws_api_gateway_integration.event_post,
+      aws_api_gateway_integration.authenticate_integration,
+      aws_api_gateway_integration.geolocation_integration,
+      aws_api_gateway_integration.event_options_integration,
+      aws_api_gateway_integration.authenticate_options_integration
+    ]))
+  }
+}
+
+resource "aws_api_gateway_stage" "dev_stage" {
+  depends_on    = [aws_api_gateway_deployment.deployment]
+  rest_api_id   = aws_api_gateway_rest_api.api_gateway.id
+  deployment_id = aws_api_gateway_deployment.deployment.id
+  stage_name    = "dev"
+
+  # Add cache settings if needed
+  cache_cluster_enabled = false
+  # cache_cluster_size   = "0.5"  # Uncomment if you want to enable caching
+
+  # Add logging settings
+  xray_tracing_enabled = true
+
+  # Add method settings for better control
+  variables = {
+    "deployed_at" = timestamp()
+  }
+
+  tags = {
+    Name        = "${local.pxa_prefix}-event-api-dev"
+    Project     = "${local.pxa_project_name}"
+    Customer    = var.PROJECT_CUSTOMER
+    Environment = var.PROJECT_ENV
+    Terraform   = true
   }
 }
 
 resource "aws_api_gateway_integration_response" "event_options_integration_response" {
+  depends_on  = [aws_api_gateway_integration.event_options_integration]
   rest_api_id = aws_api_gateway_rest_api.api_gateway.id
   resource_id = aws_api_gateway_resource.event.id
   http_method = aws_api_gateway_method.event_options.http_method
@@ -325,61 +410,16 @@ resource "aws_api_gateway_method_response" "authenticate_options_200" {
 }
 
 resource "aws_api_gateway_integration" "authenticate_options_integration" {
-  rest_api_id             = aws_api_gateway_rest_api.api_gateway.id
-  resource_id             = aws_api_gateway_resource.authenticate_resource.id
-  http_method             = aws_api_gateway_method.authenticate_options.http_method
-  type                    = "MOCK"
+  rest_api_id          = aws_api_gateway_rest_api.api_gateway.id
+  resource_id          = aws_api_gateway_resource.authenticate_resource.id
+  http_method          = aws_api_gateway_method.authenticate_options.http_method
+  type                 = "MOCK"
+  passthrough_behavior = "WHEN_NO_MATCH"
+  content_handling     = "CONVERT_TO_TEXT"
 
   request_templates = {
-    "application/json" = "{\"statusCode\": 200}"
-  }
-}
-
-resource "aws_api_gateway_integration_response" "authenticate_options_integration_response" {
-  rest_api_id = aws_api_gateway_rest_api.api_gateway.id
-  resource_id = aws_api_gateway_resource.authenticate_resource.id
-  http_method = aws_api_gateway_method.authenticate_options.http_method
-  status_code = "200"
-
-  response_parameters = {
-    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
-    "method.response.header.Access-Control-Allow-Methods" = "'POST,OPTIONS'",
-    "method.response.header.Access-Control-Allow-Origin"  = "'*'"
-  }
-
-  response_templates = {
-    "application/json" = ""
-  }
-}
-
-resource "aws_api_gateway_deployment" "deployment" {
-  depends_on = [
-    aws_api_gateway_integration.event_post,
-    aws_api_gateway_integration.authenticate_integration,
-    aws_api_gateway_integration.geolocation_integration,
-    aws_api_gateway_integration.event_options_integration,
-    aws_api_gateway_integration.authenticate_options_integration,
-    aws_api_gateway_integration_response.event_post_200,
-    aws_api_gateway_integration_response.event_post_400,
-    aws_api_gateway_integration_response.event_post_401,
-    aws_api_gateway_integration_response.event_post_403,
-    aws_api_gateway_integration_response.event_post_500,
-    aws_api_gateway_integration_response.event_options_integration_response,
-    aws_api_gateway_integration_response.authenticate_options_integration_response
-  ]
-  rest_api_id = aws_api_gateway_rest_api.api_gateway.id
-}
-
-resource "aws_api_gateway_stage" "dev_stage" {
-  rest_api_id   = aws_api_gateway_rest_api.api_gateway.id
-  deployment_id = aws_api_gateway_deployment.deployment.id
-  stage_name    = "dev"
-
-  tags = {
-    Name        = "${local.pxa_prefix}-event-api-dev"
-    Project     = "${local.pxa_project_name}"
-    Customer    = var.PROJECT_CUSTOMER
-    Environment = var.PROJECT_ENV
-    Terraform   = true
+    "application/json" = jsonencode({
+      statusCode = 200
+    })
   }
 }
